@@ -46,8 +46,8 @@ type REST struct {
 
 	resolver genericapirequest.RequestInfoResolver
 
-	podLister  cache.GenericLister
-	podHandler forward.PodHandler
+	podHandler     forward.PodHandler
+	serviceHandler forward.ServiceHandler
 
 	forwardHandler forward.ForwardHandler
 
@@ -66,6 +66,7 @@ var proxyMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OP
 func NewREST(
 	federatedInformerManager informermanager.FederatedInformerManager,
 	podLister cache.GenericLister,
+	serviceLister cache.GenericLister,
 	config *restclient.Config,
 	minRequestTimeout time.Duration,
 	logger klog.Logger,
@@ -73,6 +74,12 @@ func NewREST(
 	podHandler := forward.NewPodREST(
 		federatedInformerManager,
 		podLister,
+		minRequestTimeout,
+	)
+
+	serviceHandler := forward.NewServiceREST(
+		federatedInformerManager,
+		serviceLister,
 		minRequestTimeout,
 	)
 
@@ -87,8 +94,8 @@ func NewREST(
 		restConfig:               config,
 		federatedInformerManager: federatedInformerManager,
 		resolver:                 resolver,
-		podLister:                podLister,
 		podHandler:               podHandler,
+		serviceHandler:           serviceHandler,
 		forwardHandler:           forwardHandler,
 		logger:                   logger,
 	}, nil
@@ -149,6 +156,8 @@ func (r *REST) Connect(ctx context.Context, _ string, _ runtime.Object, resp res
 				err = errors.New("can't proxy to self")
 			case isRequestForPod(proxyInfo):
 				proxyHandler, err = r.podHandler.Handler(proxyInfo)
+			case isRequestForService(proxyInfo):
+				proxyHandler, err = r.serviceHandler.Handler(proxyInfo)
 			default:
 				// TODO: if we provide an API for ResourceMetrics or CustomMetrics, we can serve it directly without proxy
 				proxyHandler, err = r.forwardHandler.Handler(proxyInfo, r.isRequestForHPA(proxyInfo))
@@ -181,6 +190,14 @@ func isSelf(request *genericapirequest.RequestInfo) bool {
 
 func isRequestForPod(request *genericapirequest.RequestInfo) bool {
 	return request.APIGroup == "" && request.APIVersion == "v1" && request.Resource == "pods"
+}
+
+func isRequestForService(request *genericapirequest.RequestInfo) bool {
+	return request.APIGroup == "" && request.APIVersion == "v1" && request.Resource == "services"
+}
+
+func isRequestForEndpointSlice(request *genericapirequest.RequestInfo) bool {
+	return request.APIGroup == "discovery.k8s.io" && request.APIVersion == "v1" && request.Resource == "endpointslices"
 }
 
 func (r *REST) isRequestForHPA(request *genericapirequest.RequestInfo) bool {
